@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <style>
+    body {
+      background: black;
+      color: white;
+      font-family: Arial;
+      margin: 0;
+      padding: 0;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      height: 100vh;
+    }
+    #loginBox {
+      text-align: center;
+      padding: 30px;
+      background: #111;
+      border-radius: 15px;
+      box-shadow: 0 0 20px #00f;
+    }
+    button {
+      padding: 12px 25px;
+      font-size: 18px;
+      cursor: pointer;
+      border-radius: 8px;
+      border: none;
+    }
+    /* Hide the real site from the main page */
+    #site {
+      display: none;
+    }
+  </style>
+</head>
+<body>
+    <h2>Enter HTML Code:</h2>
+    <!-- Text area for user input of HTML code -->
+    <textarea id="htmlCodeInput" rows="10" cols="50">
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><title>Nolan And Grayson Games</title><style>html, body {margin: 0;padding: 0;height: 100%;width: 100%;}iframe {border: none;height: 100%;width: 100%;}</style></head<body><iframe src="https://smashkarts.io"></iframe></body></html>
+    </textarea>
+    <br>
+    <!-- Button to trigger the JavaScript function -->
+    <button onclick="launchHtml()">Launch in about:blank</button>
+
+    <script>
+        function launchHtml() {
+            // Get the HTML code from the text area
+            var userHtml = document.getElementById('htmlCodeInput').value;
+
+            // Open a new window (defaults to about:blank)
+            var newWindow = window.open();
+
+            // Write the user's HTML content to the new window's document
+            if (newWindow) {
+                newWindow.document.open();
+                newWindow.document.write(userHtml);
+                newWindow.document.close();
+            } else {
+                alert('Popup blocked! Please allow popups for this site.');
+            }
+        }
+    </script>
+</body>
+</html>

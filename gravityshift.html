@@ -1,0 +1,522 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Gravity Shift</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            overflow: hidden;
+            background: linear-gradient(135deg, #1e3c72 0%, #2a5298 50%, #7e22ce 100%);
+            font-family: 'Arial', sans-serif;
+        }
+        
+        #gameCanvas {
+            display: block;
+            background: linear-gradient(180deg, #0f172a 0%, #1e293b 100%);
+        }
+        
+        #ui {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            color: white;
+            font-size: 18px;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.8);
+            z-index: 10;
+        }
+        
+        #controls {
+            position: absolute;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            color: white;
+            text-align: center;
+            background: rgba(0,0,0,0.6);
+            padding: 15px 25px;
+            border-radius: 10px;
+            font-size: 14px;
+            z-index: 10;
+        }
+        
+        .control-key {
+            display: inline-block;
+            background: rgba(255,255,255,0.2);
+            padding: 5px 10px;
+            margin: 0 5px;
+            border-radius: 5px;
+            font-weight: bold;
+        }
+        
+        #gameOver {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            text-align: center;
+            color: white;
+            display: none;
+            background: rgba(0, 0, 0, 0.9);
+            padding: 40px;
+            border-radius: 20px;
+            border: 3px solid #a855f7;
+            z-index: 20;
+        }
+        
+        #gameOver h1 {
+            font-size: 48px;
+            margin-bottom: 20px;
+            color: #a855f7;
+        }
+        
+        #gameOver button {
+            margin-top: 20px;
+            padding: 15px 40px;
+            font-size: 20px;
+            background: linear-gradient(135deg, #a855f7, #ec4899);
+            border: none;
+            border-radius: 10px;
+            color: white;
+            cursor: pointer;
+            font-weight: bold;
+            transition: transform 0.2s;
+        }
+        
+        #gameOver button:hover {
+            transform: scale(1.1);
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas"></canvas>
+    
+    <div id="ui">
+        <div>Level: <span id="level">1</span></div>
+        <div>Lives: <span id="lives">3</span></div>
+        <div style="margin-top: 10px; font-size: 14px; opacity: 0.8;">
+            Grapple Points: <span style="color: #fbbf24;">●</span> | 
+            Destructible: <span style="color: #f87171;">■</span>
+        </div>
+    </div>
+    
+    <div id="controls">
+        <div><span class="control-key">A/D</span> Move <span class="control-key">W</span> Jump <span class="control-key">S</span> Dash</div>
+        <div style="margin-top: 8px;"><span class="control-key">MOUSE</span> Aim & Grapple <span class="control-key">CLICK</span> Destroy Terrain</div>
+    </div>
+    
+    <div id="gameOver">
+        <h1>LEVEL COMPLETE!</h1>
+        <div id="message"></div>
+        <button onclick="nextLevel()">NEXT LEVEL</button>
+        <button onclick="restartGame()" style="margin-left: 10px;">RESTART</button>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/matter-js/0.19.0/matter.min.js"></script>
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        canvas.width = window.innerWidth;
+        canvas.height = window.innerHeight;
+        
+        const Engine = Matter.Engine;
+        const World = Matter.World;
+        const Bodies = Matter.Bodies;
+        const Body = Matter.Body;
+        const Constraint = Matter.Constraint;
+        const Vector = Matter.Vector;
+        
+        let engine, world;
+        let player;
+        let platforms = [];
+        let destructibleBlocks = [];
+        let grapplePoints = [];
+        let grappleConstraint = null;
+        let isGrappling = false;
+        let mouseX = 0, mouseY = 0;
+        let keys = {};
+        let canJump = false;
+        let dashCooldown = 0;
+        let level = 1;
+        let lives = 3;
+        let goalReached = false;
+        let particles = [];
+        
+        function init() {
+            engine = Engine.create();
+            world = engine.world;
+            world.gravity.y = 1;
+            
+            createPlayer();
+            createLevel(level);
+            
+            canvas.addEventListener('mousemove', (e) => {
+                mouseX = e.clientX;
+                mouseY = e.clientY;
+            });
+            
+            canvas.addEventListener('mousedown', (e) => {
+                if (e.button === 0) {
+                    handleGrapple();
+                } else if (e.button === 2) {
+                    destroyTerrain();
+                }
+            });
+            
+            canvas.addEventListener('contextmenu', (e) => e.preventDefault());
+            
+            window.addEventListener('keydown', (e) => keys[e.key.toLowerCase()] = true);
+            window.addEventListener('keyup', (e) => keys[e.key.toLowerCase()] = false);
+            window.addEventListener('resize', () => {
+                canvas.width = window.innerWidth;
+                canvas.height = window.innerHeight;
+            });
+            
+            gameLoop();
+        }
+        
+        function createPlayer() {
+            player = Bodies.rectangle(100, 100, 30, 30, {
+                density: 0.004,
+                friction: 0.01,
+                restitution: 0.3,
+                render: { fillStyle: '#a855f7' }
+            });
+            World.add(world, player);
+        }
+        
+        function createLevel(lvl) {
+            platforms.forEach(p => World.remove(world, p));
+            destructibleBlocks.forEach(b => World.remove(world, b));
+            platforms = [];
+            destructibleBlocks = [];
+            grapplePoints = [];
+            goalReached = false;
+            
+            const ground = Bodies.rectangle(canvas.width / 2, canvas.height - 25, canvas.width, 50, { 
+                isStatic: true,
+                render: { fillStyle: '#334155' }
+            });
+            platforms.push(ground);
+            World.add(world, ground);
+            
+            if (lvl === 1) {
+                platforms.push(Bodies.rectangle(300, canvas.height - 150, 200, 20, { isStatic: true }));
+                platforms.push(Bodies.rectangle(600, canvas.height - 280, 200, 20, { isStatic: true }));
+                platforms.push(Bodies.rectangle(900, canvas.height - 200, 150, 20, { isStatic: true }));
+                
+                grapplePoints.push({ x: 450, y: canvas.height - 400 });
+                grapplePoints.push({ x: 750, y: canvas.height - 450 });
+                
+                destructibleBlocks.push(Bodies.rectangle(800, canvas.height - 250, 40, 40, { 
+                    isStatic: true,
+                    destructible: true,
+                    render: { fillStyle: '#f87171' }
+                }));
+            } else if (lvl === 2) {
+                platforms.push(Bodies.rectangle(200, canvas.height - 150, 150, 20, { isStatic: true }));
+                platforms.push(Bodies.rectangle(500, canvas.height - 300, 100, 20, { isStatic: true }));
+                platforms.push(Bodies.rectangle(800, canvas.height - 200, 150, 20, { isStatic: true }));
+                platforms.push(Bodies.rectangle(canvas.width - 150, canvas.height - 350, 200, 20, { isStatic: true }));
+                
+                grapplePoints.push({ x: 350, y: canvas.height - 450 });
+                grapplePoints.push({ x: 650, y: canvas.height - 500 });
+                grapplePoints.push({ x: 950, y: canvas.height - 400 });
+                
+                for (let i = 0; i < 3; i++) {
+                    destructibleBlocks.push(Bodies.rectangle(450 + i * 45, canvas.height - 360, 40, 40, { 
+                        isStatic: true,
+                        destructible: true
+                    }));
+                }
+            } else {
+                platforms.push(Bodies.rectangle(150, canvas.height - 150, 120, 20, { isStatic: true }));
+                platforms.push(Bodies.rectangle(400, canvas.height - 350, 80, 20, { isStatic: true }));
+                platforms.push(Bodies.rectangle(700, canvas.height - 250, 100, 20, { isStatic: true }));
+                platforms.push(Bodies.rectangle(1000, canvas.height - 400, 120, 20, { isStatic: true }));
+                platforms.push(Bodies.rectangle(canvas.width - 100, canvas.height - 200, 150, 20, { isStatic: true }));
+                
+                grapplePoints.push({ x: 280, y: canvas.height - 500 });
+                grapplePoints.push({ x: 550, y: canvas.height - 450 });
+                grapplePoints.push({ x: 850, y: canvas.height - 550 });
+                grapplePoints.push({ x: canvas.width - 200, y: canvas.height - 500 });
+                
+                for (let i = 0; i < 5; i++) {
+                    destructibleBlocks.push(Bodies.rectangle(600 + i * 45, canvas.height - 310, 40, 40, { 
+                        isStatic: true,
+                        destructible: true
+                    }));
+                }
+            }
+            
+            platforms.slice(1).forEach(p => World.add(world, p));
+            destructibleBlocks.forEach(b => World.add(world, b));
+            
+            Body.setPosition(player, { x: 100, y: 100 });
+            Body.setVelocity(player, { x: 0, y: 0 });
+        }
+        
+        function handlePlayerMovement() {
+            const moveForce = 0.002;
+            const maxSpeed = 6;
+            const jumpForce = -0.15;
+            
+            if ((keys['a'] || keys['arrowleft']) && player.velocity.x > -maxSpeed) {
+                Body.applyForce(player, player.position, { x: -moveForce, y: 0 });
+            }
+            if ((keys['d'] || keys['arrowright']) && player.velocity.x < maxSpeed) {
+                Body.applyForce(player, player.position, { x: moveForce, y: 0 });
+            }
+            
+            canJump = checkGrounded();
+            
+            if ((keys['w'] || keys['arrowup'] || keys[' ']) && canJump) {
+                Body.setVelocity(player, { x: player.velocity.x, y: jumpForce });
+                canJump = false;
+                keys['w'] = false;
+                keys['arrowup'] = false;
+                keys[' '] = false;
+            }
+            
+            if ((keys['s'] || keys['arrowdown']) && dashCooldown === 0) {
+                const angle = Math.atan2(mouseY - player.position.y, mouseX - player.position.x);
+                Body.setVelocity(player, { 
+                    x: Math.cos(angle) * 15, 
+                    y: Math.sin(angle) * 15 
+                });
+                dashCooldown = 60;
+                createParticles(player.position.x, player.position.y, 10);
+                keys['s'] = false;
+                keys['arrowdown'] = false;
+            }
+            
+            if (dashCooldown > 0) dashCooldown--;
+        }
+        
+        function checkGrounded() {
+            const contacts = Matter.Query.collides(player, platforms.concat(destructibleBlocks));
+            return contacts.some(contact => {
+                const normal = contact.normal || contact.collision?.normal;
+                return normal && normal.y < -0.5;
+            });
+        }
+        
+        function handleGrapple() {
+            if (isGrappling) {
+                if (grappleConstraint) {
+                    World.remove(world, grappleConstraint);
+                    grappleConstraint = null;
+                }
+                isGrappling = false;
+                return;
+            }
+            
+            let closestPoint = null;
+            let minDist = Infinity;
+            
+            grapplePoints.forEach(point => {
+                const dist = Math.hypot(point.x - mouseX, point.y - mouseY);
+                if (dist < 50 && dist < minDist) {
+                    minDist = dist;
+                    closestPoint = point;
+                }
+            });
+            
+            if (closestPoint) {
+                isGrappling = true;
+                grappleConstraint = Constraint.create({
+                    bodyA: player,
+                    pointB: closestPoint,
+                    stiffness: 0.05,
+                    length: Math.hypot(closestPoint.x - player.position.x, closestPoint.y - player.position.y)
+                });
+                World.add(world, grappleConstraint);
+            }
+        }
+        
+        function destroyTerrain() {
+            for (let i = destructibleBlocks.length - 1; i >= 0; i--) {
+                const block = destructibleBlocks[i];
+                const dist = Math.hypot(block.position.x - mouseX, block.position.y - mouseY);
+                
+                if (dist < 60) {
+                    World.remove(world, block);
+                    destructibleBlocks.splice(i, 1);
+                    createParticles(block.position.x, block.position.y, 15);
+                }
+            }
+        }
+        
+        function createParticles(x, y, count) {
+            for (let i = 0; i < count; i++) {
+                particles.push({
+                    x, y,
+                    vx: (Math.random() - 0.5) * 8,
+                    vy: (Math.random() - 0.5) * 8,
+                    life: 30,
+                    color: `hsl(${Math.random() * 60 + 270}, 70%, 60%)`
+                });
+            }
+        }
+        
+        function updateParticles() {
+            for (let i = particles.length - 1; i >= 0; i--) {
+                const p = particles[i];
+                p.x += p.vx;
+                p.y += p.vy;
+                p.vy += 0.3;
+                p.life--;
+                
+                if (p.life <= 0) {
+                    particles.splice(i, 1);
+                }
+            }
+        }
+        
+        function checkGoal() {
+            if (player.position.x > canvas.width - 150 && player.position.y < canvas.height - 150) {
+                if (!goalReached) {
+                    goalReached = true;
+                    document.getElementById('message').textContent = `Level ${level} Complete!`;
+                    document.getElementById('gameOver').style.display = 'block';
+                }
+            }
+            
+            if (player.position.y > canvas.height + 100) {
+                lives--;
+                document.getElementById('lives').textContent = lives;
+                
+                if (lives <= 0) {
+                    document.getElementById('message').textContent = 'Game Over! Try Again.';
+                    document.getElementById('gameOver').style.display = 'block';
+                    document.querySelector('#gameOver button').textContent = 'RESTART';
+                } else {
+                    Body.setPosition(player, { x: 100, y: 100 });
+                    Body.setVelocity(player, { x: 0, y: 0 });
+                }
+            }
+        }
+        
+        function nextLevel() {
+            level++;
+            document.getElementById('level').textContent = level;
+            document.getElementById('gameOver').style.display = 'none';
+            createLevel(level);
+        }
+        
+        function restartGame() {
+            level = 1;
+            lives = 3;
+            document.getElementById('level').textContent = level;
+            document.getElementById('lives').textContent = lives;
+            document.getElementById('gameOver').style.display = 'none';
+            createLevel(level);
+        }
+        
+        function draw() {
+            ctx.fillStyle = '#0f172a';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            platforms.forEach(platform => {
+                ctx.fillStyle = '#334155';
+                const pos = platform.position;
+                const vertices = platform.vertices;
+                ctx.beginPath();
+                ctx.moveTo(vertices[0].x, vertices[0].y);
+                vertices.forEach(v => ctx.lineTo(v.x, v.y));
+                ctx.closePath();
+                ctx.fill();
+            });
+            
+            destructibleBlocks.forEach(block => {
+                ctx.fillStyle = '#f87171';
+                ctx.shadowColor = '#f87171';
+                ctx.shadowBlur = 10;
+                const pos = block.position;
+                const angle = block.angle;
+                ctx.save();
+                ctx.translate(pos.x, pos.y);
+                ctx.rotate(angle);
+                ctx.fillRect(-20, -20, 40, 40);
+                ctx.restore();
+                ctx.shadowBlur = 0;
+            });
+            
+            grapplePoints.forEach(point => {
+                ctx.fillStyle = '#fbbf24';
+                ctx.shadowColor = '#fbbf24';
+                ctx.shadowBlur = 15;
+                ctx.beginPath();
+                ctx.arc(point.x, point.y, 8, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.shadowBlur = 0;
+            });
+            
+            if (grappleConstraint) {
+                ctx.strokeStyle = '#a855f7';
+                ctx.lineWidth = 2;
+                ctx.setLineDash([5, 5]);
+                ctx.beginPath();
+                ctx.moveTo(player.position.x, player.position.y);
+                ctx.lineTo(grappleConstraint.pointB.x, grappleConstraint.pointB.y);
+                ctx.stroke();
+                ctx.setLineDash([]);
+            }
+            
+            particles.forEach(p => {
+                ctx.fillStyle = p.color;
+                ctx.globalAlpha = p.life / 30;
+                ctx.beginPath();
+                ctx.arc(p.x, p.y, 3, 0, Math.PI * 2);
+                ctx.fill();
+            });
+            ctx.globalAlpha = 1;
+            
+            ctx.fillStyle = '#a855f7';
+            ctx.shadowColor = '#a855f7';
+            ctx.shadowBlur = 20;
+            const pos = player.position;
+            const angle = player.angle;
+            ctx.save();
+            ctx.translate(pos.x, pos.y);
+            ctx.rotate(angle);
+            ctx.fillRect(-15, -15, 30, 30);
+            ctx.restore();
+            ctx.shadowBlur = 0;
+            
+            ctx.fillStyle = '#10b981';
+            ctx.shadowColor = '#10b981';
+            ctx.shadowBlur = 20;
+            ctx.fillRect(canvas.width - 180, canvas.height - 230, 130, 80);
+            ctx.shadowBlur = 0;
+            ctx.fillStyle = 'white';
+            ctx.font = 'bold 16px Arial';
+            ctx.textAlign = 'center';
+            ctx.fillText('GOAL', canvas.width - 115, canvas.height - 185);
+            
+            ctx.strokeStyle = 'rgba(168, 85, 247, 0.3)';
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.arc(mouseX, mouseY, 50, 0, Math.PI * 2);
+            ctx.stroke();
+        }
+        
+        function gameLoop() {
+            Engine.update(engine, 1000 / 60);
+            handlePlayerMovement();
+            updateParticles();
+            checkGoal();
+            draw();
+            requestAnimationFrame(gameLoop);
+        }
+        
+        init();
+    </script>
+</body>
+</html>
